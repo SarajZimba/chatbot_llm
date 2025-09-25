@@ -1,0 +1,25 @@
+[Unit]
+Description=Flask Document + Excel Q&A API
+After=network.target
+
+[Service]
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/lamallm
+
+# Use virtual environment and include ollama path
+Environment="PATH=/home/ubuntu/lamallm/myenv/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin"
+
+# Use a single worker for now (global variable issue)
+ExecStart=/home/ubuntu/lamallm/myenv/bin/gunicorn \
+    --bind 0.0.0.0:8015 \
+    --workers 4 \
+    --threads 2 \
+    --timeout 300 \
+    app_new:app
+
+Restart=always
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
