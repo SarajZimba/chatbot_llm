@@ -38,6 +38,11 @@ EXPIRY_SECONDS = 1800  # 30 minutes
 OLLAMA_PATH = "/usr/local/bin/ollama"
 
 
+from file_utils import UPLOAD_FOLDER
+
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+
+
 # ------------------------------
 # Text extraction
 # ------------------------------
@@ -553,6 +558,13 @@ def ask_image_question():
         "answer": answer
     })
 
+
+from flask import send_from_directory
+
+# Serve uploaded images
+@app.route("/uploads/commands/<filename>")
+def uploaded_file(filename):
+    return send_from_directory("uploads/commands", filename)
 
 
 
