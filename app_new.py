@@ -296,92 +296,6 @@ def query_llama_with_no_slots(context, question):
     output = query_llama(question + "\n" + context + "\n" + prompt, question)
 
     return output
-
-
-
-# # ------------------------------
-# # Ask outlet endpoint
-# @app.route("/ask-outlet-commands", methods=["POST"])
-# def ask_question_outlet_commands():
-#     try:
-#         data = request.get_json()
-#         question = data.get("question")
-#         document_outlet_name = data.get("document_outlet_name")
-#         user_id = data.get("user_id")  # frontend should send user id
-
-#         if not question or not document_outlet_name or not user_id:
-#             return jsonify({"error": "question, document_outlet_name, and user_id are required"}), 400
-
-#         session_key = f"{document_outlet_name}_{user_id}"
-
-#         # Step 1: Match command
-#         command_id, command_text = match_command(document_outlet_name, question)
-
-#         # Step 2: Load session from Redis
-#         session_json = r.get(session_key)
-#         if session_json:
-#             session = json.loads(session_json)
-#         else:
-#             session = {}
-
-#         # Step 3: Initialize session if new and command exists
-#         if not session and command_id:
-#             slots = get_command_slots(command_id)  # dynamically fetch slots
-#             session = {
-#                 "command_id": command_id,
-#                 "command": command_text,
-#                 "slots": slots,
-#                 "context": ""
-#             }
-
-#         # Step 4: Load document chunks for context
-#         context = ""
-#         if document_outlet_name:
-#             try:
-#                 chunks, index = load_document_from_db_outletwise(document_outlet_name)
-#                 q_embed = embedder.encode([question])
-#                 D, I = index.search(q_embed, k=3)
-#                 context = " ".join([chunks[i] for i in I[0]])
-#             except Exception as e:
-#                 print(e)
-#                 return jsonify({"error": "Document not found or failed to load"}), 404
-
-#         # Step 5: Merge context with session
-#         if session:
-#             context = session.get("context", "") + " " + context
-
-#         # Step 6: Call LLaMA with current slots
-#         slots_dict = session.get("slots", {}) if session else {}
-#         answer, extracted_slots = query_llama_with_slots(context, question, slots_dict)
-
-#         # Step 7: Update session slots
-#         if session:
-#             for k, v in extracted_slots.items():
-#                 if k in session["slots"] and v:
-#                     session["slots"][k] = v
-#             # Update session context as well
-#             session["context"] = context
-
-#             # Save updated session back to Redis (expires in 1 hour)
-#             r.set(session_key, json.dumps(session), ex=3600)
-
-#         # Step 8: Check if all required slots are filled
-#         ready_to_call_api = False
-#         if session and all(session["slots"].values()):
-#             ready_to_call_api = True
-#             # Call the relevant backend API based on session["command"]
-
-#         return jsonify({
-#             "question": question,
-#             "document_outlet_name": document_outlet_name,
-#             "command": session.get("command") if session else None,
-#             "slots": session.get("slots") if session else {},
-#             "ready_to_call_api": ready_to_call_api,
-#             "answer": answer
-#         })
-
-#     except Exception as e:
-#         return jsonify({"error": str(e)}), 500
     
 
 from helper_func import get_db_connection  # assuming this exists
@@ -406,19 +320,116 @@ def get_slots_for_command(command_id):
     return slots
 
 
+# @app.route("/ask-outlet-command-slots", methods=["POST"])
+# def ask_outlet_command_slots():
+#     try:
+#         data = request.get_json()
+#         document_outlet_name = data.get("document_outlet_name")
+#         user_id = data.get("user_id")
+#         command_id = data.get("command_id")  # selected command by user
+#         user_slots = data.get("slots", {})   # optional new slot values
+#         question = data.get("question", "")  # user question for LLaMA
+
+#         if not document_outlet_name or not user_id or not command_id:
+#             return jsonify({"error": "document_outlet_name, user_id, and command_id are required"}), 400
+
+#         session_key = f"{document_outlet_name}_{user_id}_{command_id}"
+
+#         # Load current session from Redis
+#         session_json = r.get(session_key)
+#         session_slots = json.loads(session_json) if session_json else {}
+
+#         # Update session slots with frontend values
+#         session_slots.update(user_slots)
+
+#         # Fetch required slots for this command from DB
+#         slots_required = get_slots_for_command(command_id)
+#         slots_dict = {slot["slot_name"]: session_slots.get(slot["slot_name"]) for slot in slots_required}
+
+#         # Check if all required slots are filled
+#         ready_to_call_api = all(v is not None and v != "" for v in slots_dict.values())
+
+#         # Determine if this command has subcommands
+#         conn = get_db_connection()
+#         cursor = conn.cursor(dictionary=True)  # <-- important!
+#         cursor.execute("SELECT COUNT(*) AS count FROM outlet_commands WHERE parent_command_id = %s", (command_id,))
+#         subcommand_count = cursor.fetchone()["count"]
+
+
+#         is_last_command = subcommand_count == 0
+
+#         # Optionally call LLaMA if it's actionable and has no slots
+#         llama_answer = None
+#         if is_last_command and not slots_dict:
+#             # Load document context
+
+#             cursor.execute("SELECT command_text FROM outlet_commands WHERE command_id=%s", (command_id,))
+#             row = cursor.fetchone()
+
+#             # Use command_text as the question if frontend didn't provide one
+#             if row and row.get("command_text"):
+#                 question = row["command_text"]
+
+#             try:
+#                 chunks, index = load_document_from_db_outletwise(document_outlet_name)
+#                 context = " ".join(chunks)  # simple concat; you can use vector search if needed
+#                 llama_answer = query_llama_with_no_slots(context, question)
+#             except Exception as e:
+#                 llama_answer = f"No document context found: {str(e)}"
+#         cursor.close()
+#         conn.close()
+
+#         # Save back to Redis (expires in 1 hour)
+#         r.set(session_key, json.dumps(slots_dict), ex=3600)
+
+#         return jsonify({
+#             "document_outlet_name": document_outlet_name,
+#             "command_id": command_id,
+#             "slots": slots_dict,
+#             "ready_to_call_api": ready_to_call_api,
+#             "is_last_command": is_last_command,
+#             "llama_answer": llama_answer
+#         }), 200
+
+#     except Exception as e:
+#         return jsonify({"error": str(e)}), 500
+
+# ------------------------------
 @app.route("/ask-outlet-command-slots", methods=["POST"])
 def ask_outlet_command_slots():
     try:
         data = request.get_json()
         document_outlet_name = data.get("document_outlet_name")
         user_id = data.get("user_id")
-        command_id = data.get("command_id")  # selected command by user
+        command_id = data.get("command_id")  # can be None
         user_slots = data.get("slots", {})   # optional new slot values
         question = data.get("question", "")  # user question for LLaMA
 
-        if not document_outlet_name or not user_id or not command_id:
-            return jsonify({"error": "document_outlet_name, user_id, and command_id are required"}), 400
+        # Required fields
+        if not document_outlet_name or not user_id:
+            return jsonify({"error": "document_outlet_name and user_id are required"}), 400
 
+        # ------------------------------
+        # General question flow (no command_id)
+        if not command_id and question:
+            try:
+                chunks, index = load_document_from_db_outletwise(document_outlet_name)
+                context = " ".join(chunks)
+                llama_answer = query_llama_with_no_slots(context, question)
+            except Exception as e:
+                llama_answer = f"No document context found: {str(e)}"
+
+            return jsonify({
+                "document_outlet_name": document_outlet_name,
+                "command_id": None,
+                "slots": {},
+                "ready_to_call_api": True,
+                "is_last_command": True,
+                "llama_answer": llama_answer
+            }), 200
+
+        # ------------------------------
+        # Normal command flow
         session_key = f"{document_outlet_name}_{user_id}_{command_id}"
 
         # Load current session from Redis
@@ -437,35 +448,31 @@ def ask_outlet_command_slots():
 
         # Determine if this command has subcommands
         conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)  # <-- important!
+        cursor = conn.cursor(dictionary=True)
         cursor.execute("SELECT COUNT(*) AS count FROM outlet_commands WHERE parent_command_id = %s", (command_id,))
         subcommand_count = cursor.fetchone()["count"]
-
-
         is_last_command = subcommand_count == 0
 
         # Optionally call LLaMA if it's actionable and has no slots
         llama_answer = None
         if is_last_command and not slots_dict:
-            # Load document context
-
+            # Fetch command_text if frontend didn't provide a question
             cursor.execute("SELECT command_text FROM outlet_commands WHERE command_id=%s", (command_id,))
             row = cursor.fetchone()
-
-            # Use command_text as the question if frontend didn't provide one
-            if row and row.get("command_text"):
+            if row and row.get("command_text") and not question:
                 question = row["command_text"]
 
             try:
                 chunks, index = load_document_from_db_outletwise(document_outlet_name)
-                context = " ".join(chunks)  # simple concat; you can use vector search if needed
+                context = " ".join(chunks)
                 llama_answer = query_llama_with_no_slots(context, question)
             except Exception as e:
                 llama_answer = f"No document context found: {str(e)}"
+
         cursor.close()
         conn.close()
 
-        # Save back to Redis (expires in 1 hour)
+        # Save session slots back to Redis
         r.set(session_key, json.dumps(slots_dict), ex=3600)
 
         return jsonify({
